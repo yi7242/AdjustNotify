@@ -74,9 +74,7 @@ namespace TopNotify.Daemon
         public float ScaleFactor;
         const int MinNotificationDisplayDurationMs = 100;
         const int MaxNotificationDisplayDurationMs = 30000;
-        const int MinSlideAnimationDurationMs = 50;
-        const int MaxSlideAnimationDurationMs = 5000;
-        const int MaxSlideAnimationOffsetPx = 500;
+        const int SlideAnimationDurationMs = 200;
         const int NotificationEventDebounceMs = 1200;
         bool pendingSlideAnimation = false;
         bool pendingSlideOutAnimation = false;
@@ -378,20 +376,33 @@ namespace TopNotify.Daemon
                 pendingSlideOutAnimation = false;
                 isAnimatingSlide = false;
                 isAnimatingSlideOut = false;
-                var hiddenX = originX + RealPreferredDisplayWidth + MaxSlideAnimationOffsetPx + 100;
-                SetWindowPos(hwnd, 0, hiddenX, targetY, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_SHOWWINDOW);
+                // Move to a position far off any monitor to ensure it's not visible on secondary displays
+                var hiddenX = -10000;
+                var hiddenY = -10000;
+                SetWindowPos(hwnd, 0, hiddenX, hiddenY, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_SHOWWINDOW);
                 return;
             }
+
+            // Calculate the right edge of the current monitor for boundary checking
+            var monitorRightEdge = originX + RealPreferredDisplayWidth;
 
             if (pendingSlideAnimation)
             {
                 pendingSlideAnimation = false;
-                isAnimatingSlide = true;
-                slideAnimationStartTime = DateTime.UtcNow;
-                var slideOffsetPx = Math.Clamp(Settings.SlideAnimationStartOffsetPx, 0, MaxSlideAnimationOffsetPx);
-                // Start from the current toast location to avoid a visible "second slide" after Windows' own toast animation.
-                slideAnimationStartX = Math.Max(NotifyRect.X, targetX + slideOffsetPx);
                 slideAnimationTargetX = targetX;
+                var currentDistanceFromTargetPx = NotifyRect.X - slideAnimationTargetX;
+
+                // Only animate if the window is noticeably away from target
+                if (currentDistanceFromTargetPx > 16)
+                {
+                    isAnimatingSlide = true;
+                    slideAnimationStartTime = DateTime.UtcNow;
+                    slideAnimationStartX = NotifyRect.X;
+                }
+                else
+                {
+                    isAnimatingSlide = false;
+                }
             }
 
             var finalX = targetX;
@@ -402,23 +413,19 @@ namespace TopNotify.Daemon
                 isAnimatingSlide = false;
                 slideOutAnimationStartTime = DateTime.UtcNow;
                 slideOutAnimationStartX = NotifyRect.X;
-                var slideOffsetPx = Math.Clamp(Settings.SlideAnimationStartOffsetPx, 0, MaxSlideAnimationOffsetPx);
-                slideOutAnimationTargetX = originX + RealPreferredDisplayWidth + slideOffsetPx;
-                if (slideOutAnimationTargetX <= slideOutAnimationStartX)
-                {
-                    slideOutAnimationTargetX = slideOutAnimationStartX + Math.Max(16, slideOffsetPx);
-                }
+                // Target: slide just past the monitor's right edge
+                slideOutAnimationTargetX = monitorRightEdge;
             }
 
             if (isAnimatingSlideOut)
             {
-                var slideAnimationDurationMs = Math.Clamp(Settings.SlideAnimationDurationMs, MinSlideAnimationDurationMs, MaxSlideAnimationDurationMs);
                 var elapsedMs = (DateTime.UtcNow - slideOutAnimationStartTime).TotalMilliseconds;
-                var progress = Math.Clamp(elapsedMs / slideAnimationDurationMs, 0.0, 1.0);
+                var progress = Math.Clamp(elapsedMs / SlideAnimationDurationMs, 0.0, 1.0);
                 var easedProgress = EaseInCubic(progress);
                 finalX = (int)Math.Round(slideOutAnimationStartX + ((slideOutAnimationTargetX - slideOutAnimationStartX) * easedProgress));
 
-                if (progress >= 1.0)
+                // Hide immediately once the window reaches the monitor edge
+                if (progress >= 1.0 || finalX >= monitorRightEdge)
                 {
                     isAnimatingSlideOut = false;
                     hideActiveNotification = true;
@@ -433,13 +440,15 @@ namespace TopNotify.Daemon
                     {
                         SendMessage(currentHwnd, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
                     }
+                    // Immediately hide off-screen
+                    SetWindowPos(hwnd, 0, -10000, -10000, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_SHOWWINDOW);
+                    return;
                 }
             }
             else if (isAnimatingSlide)
             {
-                var slideAnimationDurationMs = Math.Clamp(Settings.SlideAnimationDurationMs, MinSlideAnimationDurationMs, MaxSlideAnimationDurationMs);
                 var elapsedMs = (DateTime.UtcNow - slideAnimationStartTime).TotalMilliseconds;
-                var progress = Math.Clamp(elapsedMs / slideAnimationDurationMs, 0.0, 1.0);
+                var progress = Math.Clamp(elapsedMs / SlideAnimationDurationMs, 0.0, 1.0);
                 var easedProgress = EaseOutCubic(progress);
                 finalX = (int)Math.Round(slideAnimationStartX + ((slideAnimationTargetX - slideAnimationStartX) * easedProgress));
 
