@@ -8,7 +8,7 @@
 
   <h3 align="center">AdjustNotify Fork</h3>
   <p align="center">
-    A TopNotify fork focused on notification timing and animation control
+    A TopNotify fork focused on notification timing control
     <br />
     <br />
   </p>
@@ -28,8 +28,7 @@
 This fork keeps the upstream TopNotify README structure and adds the following features/workflow:
 
 - Added more aggressive notification lifetime control for short display times
-- Added slide-out animation support on close
-- Added guards against duplicate slide-in triggers
+- Keeps toast entry/exit animation behavior fully native to Windows
 - Added local dev script: `TopNotify/BuildInstallRunLocal.ps1`
   - Stops running TopNotify
   - Builds (or `-SkipBuild`)
@@ -42,7 +41,6 @@ This fork keeps the upstream TopNotify README structure and adds the following f
 - Make notifications show on another monitor
 - Change transparency of notifications
 - Adjust notification display time (1s to 10s)
-- Slide animation toggle
 - Click-Through notifications
 - Customize notification sounds for each app
 - Efficient performance with minimal CPU/RAM usage

@@ -1,8 +1,7 @@
-import { Slider, SliderFilledTrack, SliderThumb, SliderTrack, Switch } from "@chakra-ui/react";
+import { Slider, SliderFilledTrack, SliderThumb, SliderTrack } from "@chakra-ui/react";
 
 export default function NotificationMotion() {
     const displaySeconds = GetDisplaySeconds();
-    const animationEnabled = Config.EnableSlideAnimation != false;
 
     return (
         <div className="flexy fillx gap10">
@@ -28,11 +27,6 @@ export default function NotificationMotion() {
                         </Slider>
                     )
             }
-
-            <div className="flexx facenter fillx gap20">
-                <label>Slide Animation</label>
-                <Switch onChange={(e) => ChangeSwitch("EnableSlideAnimation", e)} isChecked={animationEnabled} style={{ marginLeft: "auto" }} size='lg' />
-            </div>
         </div>
     );
 }

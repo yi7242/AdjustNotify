@@ -17,7 +17,6 @@ window.Config = {
     Location: -1,
     Opacity: 0,
     NotificationDisplayDurationMs: 2000,
-    EnableSlideAnimation: true,
     ReadAloud: false,
     AppReferences: []
 };
@@ -25,6 +24,7 @@ window.Config = {
 // Called By C#, Sets The window.Config Object To The Saved Config File
 window.SetConfig = async (config) => {
     Config = JSON.parse(config);
+    delete Config.EnableSlideAnimation;
     window.setRerender(rerender + 1);
 };
 
@@ -35,6 +35,7 @@ window.UploadConfig = () => {
         return;
     }
 
+    delete Config.EnableSlideAnimation;
     igniteView.commandBridge.WriteConfigFile(JSON.stringify(Config));
     window.setRerender(rerender + 1);
 };

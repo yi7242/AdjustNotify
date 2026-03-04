@@ -31,7 +31,6 @@ namespace TopNotify.Common
 
         // Notification behavior
         public int NotificationDisplayDurationMs = 2000;
-        public bool EnableSlideAnimation = true;
 
         // Position Where Origin Is The Top Left Of The Screen
         // 0% On Both Is The Top Left
