@@ -77,11 +77,15 @@ namespace TopNotify.Daemon
         const int MinSlideAnimationDurationMs = 50;
         const int MaxSlideAnimationDurationMs = 5000;
         const int MaxSlideAnimationOffsetPx = 500;
+        const int NotificationEventDebounceMs = 1200;
         bool pendingSlideAnimation = false;
         bool isAnimatingSlide = false;
+        bool hideActiveNotification = false;
         DateTime slideAnimationStartTime = DateTime.MinValue;
+        DateTime lastNotificationEventTime = DateTime.MinValue;
         int slideAnimationStartX = 0;
         int slideAnimationTargetX = 0;
+        uint lastNotificationId = uint.MaxValue;
         CancellationTokenSource? notificationCloseCts;
 
         public override void Start()
@@ -95,6 +99,9 @@ namespace TopNotify.Daemon
         {
             pendingSlideAnimation = false;
             isAnimatingSlide = false;
+            hideActiveNotification = false;
+            lastNotificationId = uint.MaxValue;
+            lastNotificationEventTime = DateTime.MinValue;
             notificationCloseCts?.Cancel();
             notificationCloseCts?.Dispose();
             notificationCloseCts = null;
@@ -109,8 +116,30 @@ namespace TopNotify.Daemon
                 return;
             }
 
+            var nowUtc = DateTime.UtcNow;
+            var msSinceLastEvent = (nowUtc - lastNotificationEventTime).TotalMilliseconds;
+            var sameNotificationGraceMs = Math.Clamp(Settings.NotificationDisplayDurationMs + 1500, 1500, 8000);
+
+            // Some systems emit multiple added events for the same visual toast.
+            if (notification.Id == lastNotificationId && msSinceLastEvent < sameNotificationGraceMs)
+            {
+                Program.Logger.Information($"Ignoring duplicate notification event (id={notification.Id})");
+                return;
+            }
+
+            // Debounce very close notification events to avoid repeated re-animations.
+            if (msSinceLastEvent < NotificationEventDebounceMs)
+            {
+                Program.Logger.Information($"Ignoring debounced notification event (id={notification.Id})");
+                return;
+            }
+
+            lastNotificationId = notification.Id;
+            lastNotificationEventTime = nowUtc;
+            hideActiveNotification = false;
+            Program.Logger.Information($"Handling notification event (id={notification.Id})");
             pendingSlideAnimation = Settings.EnableSlideAnimation;
-            BeginNotificationCloseCountdown();
+            BeginNotificationCloseCountdown(notification.Id);
 
             base.OnNotification(notification);
         }
@@ -203,7 +232,18 @@ namespace TopNotify.Daemon
             base.OnKeyUpdate();
         }
 
-        void BeginNotificationCloseCountdown()
+        void TryRemoveNotification(uint notificationId)
+        {
+            try
+            {
+                var manager = InterceptorManager.Instance;
+                manager?.Listener?.RemoveNotification(notificationId);
+                manager?.ActiveNotificationIds.TryRemove(notificationId, out _);
+            }
+            catch { }
+        }
+
+        void BeginNotificationCloseCountdown(uint notificationId)
         {
             notificationCloseCts?.Cancel();
             notificationCloseCts?.Dispose();
@@ -216,6 +256,17 @@ namespace TopNotify.Daemon
                 try
                 {
                     await Task.Delay(displayDurationMs, closeToken);
+
+                    if (closeToken.IsCancellationRequested)
+                    {
+                        return;
+                    }
+
+                    Program.Logger.Information($"Closing notification (id={notificationId}) after {displayDurationMs}ms");
+
+                    // Force-hide from view even when Windows enforces a minimum toast display duration.
+                    hideActiveNotification = true;
+                    TryRemoveNotification(notificationId);
 
                     var currentHwnd = hwnd;
                     if (closeToken.IsCancellationRequested || currentHwnd == IntPtr.Zero)
@@ -290,6 +341,15 @@ namespace TopNotify.Daemon
 
                 targetX = originX + xPosition;
                 targetY = originY + yPosition;
+            }
+
+            if (hideActiveNotification)
+            {
+                pendingSlideAnimation = false;
+                isAnimatingSlide = false;
+                var hiddenX = originX + RealPreferredDisplayWidth + MaxSlideAnimationOffsetPx + 100;
+                SetWindowPos(hwnd, 0, hiddenX, targetY, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_SHOWWINDOW);
+                return;
             }
 
             if (pendingSlideAnimation)
