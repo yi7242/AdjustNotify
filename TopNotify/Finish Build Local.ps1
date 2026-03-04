@@ -6,6 +6,55 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+function Stop-TopNotifyProcesses {
+    param(
+        [int]$TimeoutSeconds = 15
+    )
+
+    # Stop regular processes first.
+    Get-Process TopNotify -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+
+    # Kill process trees in case child processes are holding files.
+    & taskkill /F /IM TopNotify.exe /T 2>$null | Out-Null
+
+    $start = Get-Date
+    while (((Get-Date) - $start).TotalSeconds -lt $TimeoutSeconds) {
+        if (-not (Get-Process TopNotify -ErrorAction SilentlyContinue)) {
+            return
+        }
+
+        Start-Sleep -Milliseconds 250
+    }
+
+    throw "Failed to stop TopNotify.exe within $TimeoutSeconds seconds."
+}
+
+function Remove-DirectoryWithRetry {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+        [int]$MaxAttempts = 5
+    )
+
+    for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+        try {
+            if (Test-Path $Path) {
+                Remove-Item $Path -Recurse -Force
+            }
+
+            return
+        }
+        catch {
+            if ($attempt -eq $MaxAttempts) {
+                throw
+            }
+
+            Stop-TopNotifyProcesses
+            Start-Sleep -Milliseconds 300
+        }
+    }
+}
+
 function Get-PackageNameFromManifest {
     param(
         [Parameter(Mandatory = $true)]
@@ -33,7 +82,7 @@ function Install-LooseMsixPackage {
         [string]$ManifestPath
     )
 
-    Get-Process TopNotify -ErrorAction SilentlyContinue | Stop-Process -Force
+    Stop-TopNotifyProcesses
 
     $existing = Get-AppxPackage -Name $PackageName -ErrorAction SilentlyContinue
     if ($existing) {
@@ -59,6 +108,9 @@ if (-not (Test-Path $msixTemplateDir)) {
     throw "MSIX template folder not found: $msixTemplateDir"
 }
 
+Write-Host "[0/3] Stopping running TopNotify processes..."
+Stop-TopNotifyProcesses
+
 if (-not $SkipBuild) {
     Write-Host "[1/3] Building TopNotify (Release x64)..."
     $env:NODE_OPTIONS = "--dns-result-order=ipv4first"
@@ -72,9 +124,7 @@ else {
 }
 
 Write-Host "[2/3] Staging loose-file package..."
-if (Test-Path $stagingDir) {
-    Remove-Item $stagingDir -Recurse -Force
-}
+Remove-DirectoryWithRetry -Path $stagingDir
 New-Item -ItemType Directory -Path $stagingDir | Out-Null
 Copy-Item (Join-Path $msixTemplateDir "*") $stagingDir -Recurse -Force
 
