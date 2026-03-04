@@ -125,19 +125,15 @@ namespace TopNotify.Daemon
 
             var nowUtc = DateTime.UtcNow;
             var msSinceLastEvent = (nowUtc - lastNotificationEventTime).TotalMilliseconds;
-            var sameNotificationGraceMs = Math.Clamp(Settings.NotificationDisplayDurationMs + 1500, 1500, 8000);
+            var duplicateNotificationGraceMs = Math.Max(
+                NotificationEventDebounceMs,
+                Math.Clamp(Settings.NotificationDisplayDurationMs + 1500, 1500, 8000)
+            );
 
             // Some systems emit multiple added events for the same visual toast.
-            if (notification.Id == lastNotificationId && msSinceLastEvent < sameNotificationGraceMs)
+            if (notification.Id == lastNotificationId && msSinceLastEvent < duplicateNotificationGraceMs)
             {
                 Program.Logger.Information($"Ignoring duplicate notification event (id={notification.Id})");
-                return;
-            }
-
-            // Debounce very close notification events to avoid repeated re-animations.
-            if (msSinceLastEvent < NotificationEventDebounceMs)
-            {
-                Program.Logger.Information($"Ignoring debounced notification event (id={notification.Id})");
                 return;
             }
 
@@ -390,22 +386,16 @@ namespace TopNotify.Daemon
             {
                 pendingSlideAnimation = false;
                 slideAnimationTargetX = targetX;
-                var currentDistanceFromTargetPx = NotifyRect.X - slideAnimationTargetX;
-
-                // Only animate if the window is noticeably away from target
-                if (currentDistanceFromTargetPx > 16)
-                {
-                    isAnimatingSlide = true;
-                    slideAnimationStartTime = DateTime.UtcNow;
-                    slideAnimationStartX = NotifyRect.X;
-                }
-                else
-                {
-                    isAnimatingSlide = false;
-                }
+                // Always animate slide-in from current position
+                isAnimatingSlide = true;
+                slideAnimationStartTime = DateTime.UtcNow;
+                slideAnimationStartX = NotifyRect.X;
             }
 
             var finalX = targetX;
+            // Maximum X position where window right edge stays within monitor
+            var maxWindowX = monitorRightEdge - unscaledWidth;
+
             if (pendingSlideOutAnimation)
             {
                 pendingSlideOutAnimation = false;
@@ -413,8 +403,14 @@ namespace TopNotify.Daemon
                 isAnimatingSlide = false;
                 slideOutAnimationStartTime = DateTime.UtcNow;
                 slideOutAnimationStartX = NotifyRect.X;
-                // Target: slide just past the monitor's right edge
-                slideOutAnimationTargetX = monitorRightEdge;
+                // Prefer sliding right, but keep inside monitor bounds.
+                slideOutAnimationTargetX = Math.Min(slideOutAnimationStartX + 100, maxWindowX);
+
+                if (slideOutAnimationTargetX <= slideOutAnimationStartX)
+                {
+                    // If already on the right edge, slide left briefly so close motion stays visible.
+                    slideOutAnimationTargetX = Math.Max(slideOutAnimationStartX - 50, originX);
+                }
             }
 
             if (isAnimatingSlideOut)
@@ -424,8 +420,14 @@ namespace TopNotify.Daemon
                 var easedProgress = EaseInCubic(progress);
                 finalX = (int)Math.Round(slideOutAnimationStartX + ((slideOutAnimationTargetX - slideOutAnimationStartX) * easedProgress));
 
-                // Hide immediately once the window reaches the monitor edge
-                if (progress >= 1.0 || finalX >= monitorRightEdge)
+                // Clamp to monitor boundary - never let window escape to secondary monitor
+                if (finalX > maxWindowX)
+                {
+                    finalX = maxWindowX;
+                }
+
+                var reachedRightEdge = slideOutAnimationTargetX >= slideOutAnimationStartX && finalX >= maxWindowX;
+                if (progress >= 1.0 || reachedRightEdge)
                 {
                     isAnimatingSlideOut = false;
                     hideActiveNotification = true;

@@ -18,8 +18,6 @@ window.Config = {
     Opacity: 0,
     NotificationDisplayDurationMs: 2000,
     EnableSlideAnimation: true,
-    SlideAnimationDurationMs: 260,
-    SlideAnimationStartOffsetPx: 24,
     ReadAloud: false,
     AppReferences: []
 };
