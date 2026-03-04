@@ -1,7 +1,8 @@
 param(
     [string]$ProjectRoot = $PSScriptRoot,
     [switch]$SkipBuild,
-    [switch]$NoInstall
+    [switch]$NoInstall,
+    [switch]$NoLaunch
 )
 
 $ErrorActionPreference = "Stop"
@@ -15,7 +16,11 @@ function Stop-TopNotifyProcesses {
     Get-Process TopNotify -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 
     # Kill process trees in case child processes are holding files.
-    & taskkill /F /IM TopNotify.exe /T 2>$null | Out-Null
+    try {
+        & taskkill /F /IM TopNotify.exe /T 2>$null | Out-Null
+    }
+    catch {
+    }
 
     $start = Get-Date
     while (((Get-Date) - $start).TotalSeconds -lt $TimeoutSeconds) {
@@ -55,7 +60,7 @@ function Remove-DirectoryWithRetry {
     }
 }
 
-function Get-PackageNameFromManifest {
+function Get-PackageManifestInfo {
     param(
         [Parameter(Mandatory = $true)]
         [string]$ManifestPath
@@ -67,11 +72,18 @@ function Get-PackageNameFromManifest {
 
     [xml]$manifest = Get-Content $ManifestPath
     $packageName = $manifest.Package.Identity.Name
+    $appId = $manifest.Package.Applications.Application.Id
     if (-not $packageName) {
         throw "Package name not found in AppxManifest.xml"
     }
+    if (-not $appId) {
+        throw "Application Id not found in AppxManifest.xml"
+    }
 
-    return $packageName
+    return [PSCustomObject]@{
+        PackageName = $packageName
+        AppId = $appId
+    }
 }
 
 function Install-LooseMsixPackage {
@@ -90,6 +102,26 @@ function Install-LooseMsixPackage {
     }
 
     Add-AppxPackage -Register $ManifestPath -ForceApplicationShutdown
+}
+
+function Start-InstalledPackageApp {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$PackageName,
+        [Parameter(Mandatory = $true)]
+        [string]$AppId
+    )
+
+    $package = Get-AppxPackage -Name $PackageName -ErrorAction SilentlyContinue |
+        Sort-Object Version -Descending |
+        Select-Object -First 1
+
+    if (-not $package) {
+        throw "Installed package not found: $PackageName"
+    }
+
+    $appUserModelId = "$($package.PackageFamilyName)!$AppId"
+    Start-Process "explorer.exe" "shell:AppsFolder\$appUserModelId" | Out-Null
 }
 
 $resolvedProjectRoot = (Resolve-Path $ProjectRoot).Path
@@ -144,8 +176,16 @@ if ($NoInstall) {
 }
 
 Write-Host "[3/3] Registering app package..."
-$packageName = Get-PackageNameFromManifest -ManifestPath $stagingManifestPath
-Install-LooseMsixPackage -PackageName $packageName -ManifestPath $stagingManifestPath
+$manifestInfo = Get-PackageManifestInfo -ManifestPath $stagingManifestPath
+Install-LooseMsixPackage -PackageName $manifestInfo.PackageName -ManifestPath $stagingManifestPath
+
+if ($NoLaunch) {
+    Write-Host "Launch skipped."
+}
+else {
+    Write-Host "Launching TopNotify..."
+    Start-InstalledPackageApp -PackageName $manifestInfo.PackageName -AppId $manifestInfo.AppId
+}
 
 Write-Host ""
 Write-Host "Done."

@@ -6,9 +6,9 @@
     <img src="./TopNotify/src-vite/public/Image/Icon.png" alt="TopNotify Logo" width="160" height="160">
   </a>
 
-  <h3 align="center">TopNotify</h3>
+  <h3 align="center">AdjustNotify Fork</h3>
   <p align="center">
-    The ultimate notification customization tool for Windows
+    A TopNotify fork focused on notification timing and animation control
     <br />
     <br />
   </p>
@@ -22,6 +22,19 @@
     
   </div>
 </div>
+
+# Fork Additions (This Fork)
+
+This fork keeps the upstream TopNotify README structure and adds the following features/workflow:
+
+- Added more aggressive notification lifetime control for short display times
+- Added slide-out animation support on close
+- Added guards against duplicate slide-in triggers
+- Added local dev script: `TopNotify/BuildInstallRunLocal.ps1`
+  - Stops running TopNotify
+  - Builds (or `-SkipBuild`)
+  - Stages and registers loose-file MSIX
+  - Launches TopNotify (unless `-NoLaunch`)
 
 # Features 🔥
 
