@@ -33,6 +33,7 @@ This fork keeps the upstream TopNotify README structure and adds the following f
   - Stops running TopNotify
   - Builds (or `-SkipBuild`)
   - Stages and registers loose-file MSIX
+  - Ensures local package certificate via `TopNotify/EnsureLocalDevCertificate.ps1`
   - Launches TopNotify (unless `-NoLaunch`)
 
 # Local Setup (Install Certificate + Build + Launch)
@@ -40,31 +41,36 @@ This fork keeps the upstream TopNotify README structure and adds the following f
 Use this when running this fork directly from source.
 
 1. Open PowerShell in the repository root.
-2. Run the block below (one-time certificate import + build/install/run).
+2. Run:
 
 ```powershell
-$certPath = Join-Path $PWD "TopNotify\Artifacts\TopNotifyPublisher.cer"
-if (-not (Test-Path $certPath)) {
-    throw "Certificate not found: $certPath"
-}
-
-$publisher = "CN=68C2D20A-96CA-43CC-A323-A549C2786CDA"
-$installedCert = Get-ChildItem Cert:\CurrentUser\TrustedPeople -ErrorAction SilentlyContinue |
-    Where-Object Subject -eq $publisher
-
-if (-not $installedCert) {
-    Import-Certificate -FilePath $certPath -CertStoreLocation Cert:\CurrentUser\TrustedPeople | Out-Null
-}
-
 powershell -ExecutionPolicy Bypass -File .\TopNotify\BuildInstallRunLocal.ps1
 ```
 
 3. After launch, find TopNotify in the system tray and double-click the icon to open the UI.
 
 Notes:
-- The script will stop running TopNotify, build `Release x64`, register from `TopNotify\BUILD_MSIX\AppxManifest.xml`, and launch it.
+- `BuildInstallRunLocal.ps1` now runs `TopNotify\EnsureLocalDevCertificate.ps1` automatically (unless `-SkipCertificateSetup`).
+- Local run is isolated from upstream identity by default:
+  - Package Name suffix: `.Dev` (example: `55968SamsidGameStudios.TopNotify.Dev`)
+  - Publisher: `CN=TopNotify.Dev`
+  - DisplayName suffix: ` Dev`
+- Certificate setup behavior:
+  - Reads publisher from staged manifest `TopNotify\BUILD_MSIX\AppxManifest.xml`
+  - Creates a self-signed code-signing cert in `Cert:\CurrentUser\My` if missing
+  - Exports public cert to `TopNotify\Artifacts\TopNotifyPublisher.cer`
+  - Imports cert into `Cert:\CurrentUser\TrustedPeople`
+  - Also imports into `Cert:\LocalMachine\TrustedPeople` when run as Administrator
+- The script then stops running TopNotify, builds `Release x64`, registers from `TopNotify\BUILD_MSIX\AppxManifest.xml`, and launches it.
 - For quick reruns without rebuilding: `.\TopNotify\BuildInstallRunLocal.ps1 -SkipBuild`
+- To skip certificate setup: `.\TopNotify\BuildInstallRunLocal.ps1 -SkipCertificateSetup`
+- To use upstream identity instead of dev identity: `.\TopNotify\BuildInstallRunLocal.ps1 -UseUpstreamIdentity`
 - If `Add-AppxPackage` fails with `0x80073CFF`, enable Developer Mode in Windows and run again.
+
+About `Publisher="CN=..."`:
+- This `CN=...` string is the certificate subject (Common Name) used as the MSIX publisher identity.
+- For local testing, the generated self-signed certificate must match that `Publisher` value.
+- `mkcert` is mainly for local TLS (HTTPS for hostnames like `localhost`), not MSIX/code-signing workflows.
 
 # Features 🔥
 
