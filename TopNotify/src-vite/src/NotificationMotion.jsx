@@ -1,5 +1,8 @@
 import { Slider, SliderFilledTrack, SliderThumb, SliderTrack } from "@chakra-ui/react";
 
+const MIN_DISPLAY_SECONDS = 0.1;
+const MAX_DISPLAY_SECONDS = 10;
+
 export default function NotificationMotion() {
     const displaySeconds = GetDisplaySeconds();
 
@@ -14,9 +17,9 @@ export default function NotificationMotion() {
                     (
                         <Slider
                             size="lg"
-                            min={1}
-                            max={10}
-                            step={0.5}
+                            min={MIN_DISPLAY_SECONDS}
+                            max={MAX_DISPLAY_SECONDS}
+                            step={0.1}
                             defaultValue={displaySeconds}
                             onChangeEnd={(seconds) => window.ChangeValue("NotificationDisplayDurationMs", Math.round(seconds * 1000))}
                         >
@@ -37,5 +40,5 @@ function GetDisplaySeconds() {
         return 2;
     }
 
-    return Math.max(1, Math.min(10, configuredMs / 1000));
+    return Math.max(MIN_DISPLAY_SECONDS, Math.min(MAX_DISPLAY_SECONDS, configuredMs / 1000));
 }

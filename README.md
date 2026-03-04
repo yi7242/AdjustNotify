@@ -40,7 +40,7 @@ This fork keeps the upstream TopNotify README structure and adds the following f
 - Move notification popups anywhere on your screen
 - Make notifications show on another monitor
 - Change transparency of notifications
-- Adjust notification display time (1s to 10s)
+- Adjust notification display time (0.1s to 10s)
 - Click-Through notifications
 - Customize notification sounds for each app
 - Efficient performance with minimal CPU/RAM usage
