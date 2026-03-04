@@ -42,7 +42,7 @@ This fork keeps the upstream TopNotify README structure and adds the following f
 - Make notifications show on another monitor
 - Change transparency of notifications
 - Adjust notification display time (1s to 10s)
-- Slide animation toggle with speed and distance controls
+- Slide animation toggle
 - Click-Through notifications
 - Customize notification sounds for each app
 - Efficient performance with minimal CPU/RAM usage
