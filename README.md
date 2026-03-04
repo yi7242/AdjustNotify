@@ -28,6 +28,8 @@
 - Move notification popups anywhere on your screen
 - Make notifications show on another monitor
 - Change transparency of notifications
+- Adjust notification display time (1s to 10s)
+- Slide-in animation toggle with speed and distance controls
 - Click-Through notifications
 - Customize notification sounds for each app
 - Efficient performance with minimal CPU/RAM usage

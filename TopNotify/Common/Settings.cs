@@ -29,6 +29,12 @@ namespace TopNotify.Common
         // From 0 To 5 (0 Is Fully Opaque, 5 Is Mostly Transparent)
         public float Opacity = 0;
 
+        // Notification behavior
+        public int NotificationDisplayDurationMs = 2000;
+        public bool EnableSlideAnimation = true;
+        public int SlideAnimationDurationMs = 260;
+        public int SlideAnimationStartOffsetPx = 24;
+
         // Position Where Origin Is The Top Left Of The Screen
         // 0% On Both Is The Top Left
         // 100% On Both Is Bottom Right
