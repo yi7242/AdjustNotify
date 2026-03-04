@@ -2,6 +2,7 @@ BUILD/
 TopNotify/BUILD_MSIX/
 PACK/
 target/
+TopNotify/iv2runtime/TopNotify.igniteview
 
 # User-specific files
 *.rsuser
