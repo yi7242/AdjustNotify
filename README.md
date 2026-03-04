@@ -35,6 +35,37 @@ This fork keeps the upstream TopNotify README structure and adds the following f
   - Stages and registers loose-file MSIX
   - Launches TopNotify (unless `-NoLaunch`)
 
+# Local Setup (Install Certificate + Build + Launch)
+
+Use this when running this fork directly from source.
+
+1. Open PowerShell in the repository root.
+2. Run the block below (one-time certificate import + build/install/run).
+
+```powershell
+$certPath = Join-Path $PWD "TopNotify\Artifacts\TopNotifyPublisher.cer"
+if (-not (Test-Path $certPath)) {
+    throw "Certificate not found: $certPath"
+}
+
+$publisher = "CN=68C2D20A-96CA-43CC-A323-A549C2786CDA"
+$installedCert = Get-ChildItem Cert:\CurrentUser\TrustedPeople -ErrorAction SilentlyContinue |
+    Where-Object Subject -eq $publisher
+
+if (-not $installedCert) {
+    Import-Certificate -FilePath $certPath -CertStoreLocation Cert:\CurrentUser\TrustedPeople | Out-Null
+}
+
+powershell -ExecutionPolicy Bypass -File .\TopNotify\BuildInstallRunLocal.ps1
+```
+
+3. After launch, find TopNotify in the system tray and double-click the icon to open the UI.
+
+Notes:
+- The script will stop running TopNotify, build `Release x64`, register from `TopNotify\BUILD_MSIX\AppxManifest.xml`, and launch it.
+- For quick reruns without rebuilding: `.\TopNotify\BuildInstallRunLocal.ps1 -SkipBuild`
+- If `Add-AppxPackage` fails with `0x80073CFF`, enable Developer Mode in Windows and run again.
+
 # Features 🔥
 
 - Move notification popups anywhere on your screen
