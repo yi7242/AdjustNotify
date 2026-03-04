@@ -29,6 +29,7 @@ namespace TopNotify.Daemon
         public const int ReflowTimeout = 50;
 
         public ConcurrentDictionary<uint, Action?> CleanUpFunctions = new ConcurrentDictionary<uint, Action?>(); // Maps HandledNotifications to the associated clean up function
+        public ConcurrentDictionary<uint, byte> ActiveNotificationIds = new ConcurrentDictionary<uint, byte>(); // Tracks notifications currently being handled to avoid duplicate Added events
         public UserNotificationListener Listener;
         public bool CanListenToNotifications = false;
 
@@ -157,11 +158,43 @@ namespace TopNotify.Daemon
         // Runs When A New Notification Is Added Or Removed
         public async void OnNotificationChanged(UserNotificationListener sender, UserNotificationChangedEventArgs args)
         {
-            var userNotifications = await Listener.GetNotificationsAsync(NotificationKinds.Toast);
-            var userNotification = userNotifications.Where((n) => n.Id == args.UserNotificationId).FirstOrDefault();
-
-            if (args.ChangeKind == UserNotificationChangedKind.Added)
+            var activeEntryAdded = false;
+            try
             {
+                if (args.ChangeKind == UserNotificationChangedKind.Removed)
+                {
+                    ActiveNotificationIds.TryRemove(args.UserNotificationId, out _);
+                    if (CleanUpFunctions.TryRemove(args.UserNotificationId, out var cleanUpFunction))
+                    {
+                        cleanUpFunction?.Invoke();
+                    }
+
+                    Update();
+                    return;
+                }
+
+                if (args.ChangeKind != UserNotificationChangedKind.Added)
+                {
+                    return;
+                }
+
+                // Guard against duplicated Added events for the same notification id.
+                if (!ActiveNotificationIds.TryAdd(args.UserNotificationId, 0))
+                {
+                    return;
+                }
+                activeEntryAdded = true;
+
+                var userNotifications = await Listener.GetNotificationsAsync(NotificationKinds.Toast);
+                var userNotification = userNotifications.FirstOrDefault((n) => n.Id == args.UserNotificationId);
+
+                // The notification may have disappeared before we fetched it.
+                if (userNotification == null)
+                {
+                    ActiveNotificationIds.TryRemove(args.UserNotificationId, out _);
+                    return;
+                }
+
                 foreach (Interceptor i in Interceptors)
                 {
                     try
@@ -170,14 +203,23 @@ namespace TopNotify.Daemon
                     }
                     catch { }
                 }
-            }
 
-            Update();
+                Update();
+            }
+            catch (Exception ex)
+            {
+                if (activeEntryAdded)
+                {
+                    ActiveNotificationIds.TryRemove(args.UserNotificationId, out _);
+                }
+            }
         }
 
         public void OnSettingsChanged()
         {
             CurrentSettings = Settings.Get();
+            ActiveNotificationIds.Clear();
+            CleanUpFunctions.Clear();
 
             foreach (Interceptor i in Interceptors)
             {

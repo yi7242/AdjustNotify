@@ -6,6 +6,7 @@ using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Windows;
+using System.Threading;
 using System.Threading.Tasks;
 using TopNotify.Common;
 using SamsidParty_TopNotify.Daemon;
@@ -71,6 +72,27 @@ namespace TopNotify.Daemon
         public int RealPreferredDisplayWidth;
         public int RealPreferredDisplayHeight;
         public float ScaleFactor;
+        const int MinNotificationDisplayDurationMs = 100;
+        const int MaxNotificationDisplayDurationMs = 30000;
+        const int MinSlideAnimationDurationMs = 50;
+        const int MaxSlideAnimationDurationMs = 5000;
+        const int MaxSlideAnimationOffsetPx = 500;
+        const int NotificationEventDebounceMs = 1200;
+        bool pendingSlideAnimation = false;
+        bool pendingSlideOutAnimation = false;
+        bool isAnimatingSlide = false;
+        bool isAnimatingSlideOut = false;
+        bool hideActiveNotification = false;
+        DateTime slideAnimationStartTime = DateTime.MinValue;
+        DateTime slideOutAnimationStartTime = DateTime.MinValue;
+        DateTime lastNotificationEventTime = DateTime.MinValue;
+        int slideAnimationStartX = 0;
+        int slideAnimationTargetX = 0;
+        int slideOutAnimationStartX = 0;
+        int slideOutAnimationTargetX = 0;
+        uint lastNotificationId = uint.MaxValue;
+        uint pendingCloseNotificationId = uint.MaxValue;
+        CancellationTokenSource? notificationCloseCts;
 
         public override void Start()
         {
@@ -81,7 +103,57 @@ namespace TopNotify.Daemon
 
         public override void Restart()
         {
+            pendingSlideAnimation = false;
+            pendingSlideOutAnimation = false;
+            isAnimatingSlide = false;
+            isAnimatingSlideOut = false;
+            hideActiveNotification = false;
+            lastNotificationId = uint.MaxValue;
+            pendingCloseNotificationId = uint.MaxValue;
+            lastNotificationEventTime = DateTime.MinValue;
+            notificationCloseCts?.Cancel();
+            notificationCloseCts?.Dispose();
+            notificationCloseCts = null;
+
             base.Restart();
+        }
+
+        public override void OnNotification(UserNotification notification)
+        {
+            if (notification == null)
+            {
+                return;
+            }
+
+            var nowUtc = DateTime.UtcNow;
+            var msSinceLastEvent = (nowUtc - lastNotificationEventTime).TotalMilliseconds;
+            var sameNotificationGraceMs = Math.Clamp(Settings.NotificationDisplayDurationMs + 1500, 1500, 8000);
+
+            // Some systems emit multiple added events for the same visual toast.
+            if (notification.Id == lastNotificationId && msSinceLastEvent < sameNotificationGraceMs)
+            {
+                Program.Logger.Information($"Ignoring duplicate notification event (id={notification.Id})");
+                return;
+            }
+
+            // Debounce very close notification events to avoid repeated re-animations.
+            if (msSinceLastEvent < NotificationEventDebounceMs)
+            {
+                Program.Logger.Information($"Ignoring debounced notification event (id={notification.Id})");
+                return;
+            }
+
+            lastNotificationId = notification.Id;
+            lastNotificationEventTime = nowUtc;
+            pendingSlideOutAnimation = false;
+            isAnimatingSlideOut = false;
+            hideActiveNotification = false;
+            pendingCloseNotificationId = uint.MaxValue;
+            Program.Logger.Information($"Handling notification event (id={notification.Id})");
+            pendingSlideAnimation = Settings.EnableSlideAnimation;
+            BeginNotificationCloseCountdown(notification.Id);
+
+            base.OnNotification(notification);
         }
 
         // Modified From https://stackoverflow.com/a/20276701/18071273
@@ -172,6 +244,77 @@ namespace TopNotify.Daemon
             base.OnKeyUpdate();
         }
 
+        void TryRemoveNotification(uint notificationId)
+        {
+            try
+            {
+                var manager = InterceptorManager.Instance;
+                manager?.Listener?.RemoveNotification(notificationId);
+                manager?.ActiveNotificationIds.TryRemove(notificationId, out _);
+            }
+            catch { }
+        }
+
+        void BeginNotificationCloseCountdown(uint notificationId)
+        {
+            notificationCloseCts?.Cancel();
+            notificationCloseCts?.Dispose();
+            notificationCloseCts = new CancellationTokenSource();
+            var closeToken = notificationCloseCts.Token;
+            var displayDurationMs = Math.Clamp(Settings.NotificationDisplayDurationMs, MinNotificationDisplayDurationMs, MaxNotificationDisplayDurationMs);
+
+            Task.Run(async () =>
+            {
+                try
+                {
+                    await Task.Delay(displayDurationMs, closeToken);
+
+                    if (closeToken.IsCancellationRequested)
+                    {
+                        return;
+                    }
+
+                    Program.Logger.Information($"Closing notification (id={notificationId}) after {displayDurationMs}ms");
+
+                    pendingCloseNotificationId = notificationId;
+                    if (Settings.EnableSlideAnimation)
+                    {
+                        pendingSlideOutAnimation = true;
+                        isAnimatingSlideOut = false;
+                    }
+                    else
+                    {
+                        // Force-hide from view even when Windows enforces a minimum toast display duration.
+                        hideActiveNotification = true;
+                        TryRemoveNotification(notificationId);
+                    }
+
+                    var currentHwnd = hwnd;
+                    if (closeToken.IsCancellationRequested || currentHwnd == IntPtr.Zero)
+                    {
+                        return;
+                    }
+
+                    if (!Settings.EnableSlideAnimation)
+                    {
+                        SendMessage(currentHwnd, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
+                    }
+                }
+                catch (TaskCanceledException) { }
+            });
+        }
+
+        static double EaseOutCubic(double progress)
+        {
+            var inverse = 1.0 - progress;
+            return 1.0 - (inverse * inverse * inverse);
+        }
+
+        static double EaseInCubic(double progress)
+        {
+            return progress * progress * progress;
+        }
+
         public override void Update()
         {
             base.Update();
@@ -195,24 +338,25 @@ namespace TopNotify.Daemon
             var unscaledWidth = (int)((NotifyRect.Width - NotifyRect.X));
             var unscaledHeight = (int)((NotifyRect.Height - NotifyRect.Y));
 
-            if (Settings.Location == NotifyLocation.TopLeft)
+            var targetX = originX + 0;
+            var targetY = originY + 0;
+
+            if (Settings.Location == NotifyLocation.TopRight)
             {
-                //Easy Peesy
-                SetWindowPos(hwnd, 0, originX + 0, originY + 0, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_SHOWWINDOW);
-            }
-            else if (Settings.Location == NotifyLocation.TopRight)
-            {
-                SetWindowPos(hwnd, 0, originX + (RealPreferredDisplayWidth - unscaledWidth), 0, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_SHOWWINDOW);
+                targetX = originX + (RealPreferredDisplayWidth - unscaledWidth);
+                targetY = 0;
             }
             else if (Settings.Location == NotifyLocation.BottomLeft)
             {
-                SetWindowPos(hwnd, 0, originX + 0, originY + (RealPreferredDisplayHeight - unscaledHeight - (int)Math.Round(50f)), 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_SHOWWINDOW);
+                targetX = originX + 0;
+                targetY = originY + (RealPreferredDisplayHeight - unscaledHeight - (int)Math.Round(50f));
             }
             else if (Settings.Location == NotifyLocation.BottomRight) // Default In Windows, But Here For Completeness Sake
             {
-                SetWindowPos(hwnd, 0, originX + (RealPreferredDisplayWidth - unscaledWidth), originY + (RealPreferredDisplayHeight - unscaledHeight - (int)Math.Round(50f)), 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_SHOWWINDOW);
+                targetX = originX + (RealPreferredDisplayWidth - unscaledWidth);
+                targetY = originY + (RealPreferredDisplayHeight - unscaledHeight - (int)Math.Round(50f));
             }
-            else // Custom Position
+            else if (Settings.Location == NotifyLocation.Custom) // Custom Position
             {
                 var xPosition = (int)(Settings.CustomPositionPercentX / 100f * RealPreferredDisplayWidth);
                 var yPosition = (int)(Settings.CustomPositionPercentY / 100f * RealPreferredDisplayHeight);
@@ -224,8 +368,88 @@ namespace TopNotify.Daemon
                     yPosition = Math.Clamp(yPosition, 0, RealPreferredDisplayHeight - unscaledHeight);
                 }
 
-                SetWindowPos(hwnd, 0, originX + xPosition, originY + yPosition, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_SHOWWINDOW);
+                targetX = originX + xPosition;
+                targetY = originY + yPosition;
             }
+
+            if (hideActiveNotification)
+            {
+                pendingSlideAnimation = false;
+                pendingSlideOutAnimation = false;
+                isAnimatingSlide = false;
+                isAnimatingSlideOut = false;
+                var hiddenX = originX + RealPreferredDisplayWidth + MaxSlideAnimationOffsetPx + 100;
+                SetWindowPos(hwnd, 0, hiddenX, targetY, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_SHOWWINDOW);
+                return;
+            }
+
+            if (pendingSlideAnimation)
+            {
+                pendingSlideAnimation = false;
+                isAnimatingSlide = true;
+                slideAnimationStartTime = DateTime.UtcNow;
+                var slideOffsetPx = Math.Clamp(Settings.SlideAnimationStartOffsetPx, 0, MaxSlideAnimationOffsetPx);
+                // Start from the current toast location to avoid a visible "second slide" after Windows' own toast animation.
+                slideAnimationStartX = Math.Max(NotifyRect.X, targetX + slideOffsetPx);
+                slideAnimationTargetX = targetX;
+            }
+
+            var finalX = targetX;
+            if (pendingSlideOutAnimation)
+            {
+                pendingSlideOutAnimation = false;
+                isAnimatingSlideOut = true;
+                isAnimatingSlide = false;
+                slideOutAnimationStartTime = DateTime.UtcNow;
+                slideOutAnimationStartX = NotifyRect.X;
+                var slideOffsetPx = Math.Clamp(Settings.SlideAnimationStartOffsetPx, 0, MaxSlideAnimationOffsetPx);
+                slideOutAnimationTargetX = originX + RealPreferredDisplayWidth + slideOffsetPx;
+                if (slideOutAnimationTargetX <= slideOutAnimationStartX)
+                {
+                    slideOutAnimationTargetX = slideOutAnimationStartX + Math.Max(16, slideOffsetPx);
+                }
+            }
+
+            if (isAnimatingSlideOut)
+            {
+                var slideAnimationDurationMs = Math.Clamp(Settings.SlideAnimationDurationMs, MinSlideAnimationDurationMs, MaxSlideAnimationDurationMs);
+                var elapsedMs = (DateTime.UtcNow - slideOutAnimationStartTime).TotalMilliseconds;
+                var progress = Math.Clamp(elapsedMs / slideAnimationDurationMs, 0.0, 1.0);
+                var easedProgress = EaseInCubic(progress);
+                finalX = (int)Math.Round(slideOutAnimationStartX + ((slideOutAnimationTargetX - slideOutAnimationStartX) * easedProgress));
+
+                if (progress >= 1.0)
+                {
+                    isAnimatingSlideOut = false;
+                    hideActiveNotification = true;
+                    if (pendingCloseNotificationId != uint.MaxValue)
+                    {
+                        TryRemoveNotification(pendingCloseNotificationId);
+                        pendingCloseNotificationId = uint.MaxValue;
+                    }
+
+                    var currentHwnd = hwnd;
+                    if (currentHwnd != IntPtr.Zero)
+                    {
+                        SendMessage(currentHwnd, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
+                    }
+                }
+            }
+            else if (isAnimatingSlide)
+            {
+                var slideAnimationDurationMs = Math.Clamp(Settings.SlideAnimationDurationMs, MinSlideAnimationDurationMs, MaxSlideAnimationDurationMs);
+                var elapsedMs = (DateTime.UtcNow - slideAnimationStartTime).TotalMilliseconds;
+                var progress = Math.Clamp(elapsedMs / slideAnimationDurationMs, 0.0, 1.0);
+                var easedProgress = EaseOutCubic(progress);
+                finalX = (int)Math.Round(slideAnimationStartX + ((slideAnimationTargetX - slideAnimationStartX) * easedProgress));
+
+                if (progress >= 1.0)
+                {
+                    isAnimatingSlide = false;
+                }
+            }
+
+            SetWindowPos(hwnd, 0, finalX, targetY, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_SHOWWINDOW);
 
         }
     }

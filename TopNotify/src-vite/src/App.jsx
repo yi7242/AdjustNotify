@@ -6,6 +6,7 @@ import { DebugMenu } from "./DebugMenu";
 import { useFirstRender } from "./Helper";
 import MonitorSelect from "./MonitorSelect";
 import ManageNotificationSounds from "./NotificationSounds";
+import NotificationMotion from "./NotificationMotion";
 import Preview from "./Preview";
 import ReadAloud from "./ReadAloud";
 import SoundInterceptionToggle from "./SoundInterceptionToggle";
@@ -15,6 +16,10 @@ import NotificationTransparency from "./Transparency";
 window.Config = {
     Location: -1,
     Opacity: 0,
+    NotificationDisplayDurationMs: 2000,
+    EnableSlideAnimation: true,
+    SlideAnimationDurationMs: 260,
+    SlideAnimationStartOffsetPx: 24,
     ReadAloud: false,
     AppReferences: []
 };
@@ -88,6 +93,8 @@ function App() {
                 <ClickThrough></ClickThrough>
                 <Divider />
                 <NotificationTransparency></NotificationTransparency>
+                <Divider />
+                <NotificationMotion></NotificationMotion>
             </Container>
 
             <Container>
